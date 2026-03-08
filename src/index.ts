@@ -27,37 +27,45 @@ const server = new McpServer({
   description: "Enables AI to accurately access Bible translations in hundreds of languages, original Greek/Hebrew texts with morphology, interlinear alignments, and lexicons"
 });
 
+// Helper: determine OT vs NT
+const OT_BOOKS = new Set(Object.keys(BOOK_NAMES).slice(0, 39));
+const NT_BOOKS = new Set(Object.keys(BOOK_NAMES).slice(39));
+
+function autoSource(book: string, requestedSource: string): string {
+  if (requestedSource === "ugnt" && !NT_BOOKS.has(book)) return "uhb";
+  if (requestedSource === "uhb" && !OT_BOOKS.has(book)) return "ugnt";
+  if (requestedSource === "hebrew") return OT_BOOKS.has(book) ? "uhb" : "ugnt";
+  if (requestedSource === "greek") return NT_BOOKS.has(book) ? "ugnt" : "uhb";
+  return requestedSource;
+}
+
 // Tool: get_verse
 server.tool(
   "get_verse",
-  "Get Bible verse(s) by reference. Sources: 'ult' (English), 'ugnt' (Greek NT), 'uhb' (Hebrew OT)",
+  "Get Bible verse(s) from local unfoldingWord texts. Use source 'uhb' for Hebrew OT, 'ugnt' for Greek NT, or 'ult' for English. Includes word-level morphology for original languages. For other translations (BSB, WEB, etc.), use get_translation_verse instead.",
   {
-    reference: z.string().describe("Bible reference, e.g. 'Gen 1:1', 'John 3:16', 'Ps 23:1-6'"),
-    source: z.enum(["ult", "ugnt", "uhb"]).default("ult").describe("Text source: ult (English), ugnt (Greek), uhb (Hebrew)")
+    reference: z.string().describe("Bible reference as a string, e.g. 'Gen 1:1', 'John 3:16', 'Ps 23:1-6', 'Psalms 20'. Supports book name + chapter, or book + chapter:verse, or book + chapter:verse-verse."),
+    source: z.enum(["ult", "ugnt", "uhb"]).default("ult").describe("Text source: 'ult' = English (unfoldingWord Literal Text), 'ugnt' = Greek New Testament, 'uhb' = Hebrew Old Testament. Auto-corrects if source doesn't match testament.")
   },
   async ({ reference, source }) => {
     const ref = parseReference(reference);
     if (!ref) {
-      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}". Use format like "Gen 1:1" or "John 3:16-18"` }] };
+      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}". Use format like "Gen 1:1", "John 3:16-18", or "Psalms 20" (full chapter).` }] };
     }
 
-    // Validate source matches testament
-    const otBooks = new Set(Object.keys(BOOK_NAMES).slice(0, 39));
-    const ntBooks = new Set(Object.keys(BOOK_NAMES).slice(39));
-    if (source === "ugnt" && !ntBooks.has(ref.book)) {
-      return { content: [{ type: "text" as const, text: `UGNT only contains New Testament books. "${ref.book}" is in the Old Testament. Use "uhb" for Hebrew or "ult" for English.` }] };
-    }
-    if (source === "uhb" && !otBooks.has(ref.book)) {
-      return { content: [{ type: "text" as const, text: `UHB only contains Old Testament books. "${ref.book}" is in the New Testament. Use "ugnt" for Greek or "ult" for English.` }] };
+    // Auto-correct source if it doesn't match the testament
+    const resolvedSource = autoSource(ref.book, source);
+    if (resolvedSource !== source) {
+      // Silently correct rather than error
     }
 
     if (ref.verse && !ref.endVerse) {
-      const result = db.getVerse(source, ref.book, ref.chapter, ref.verse);
+      const result = db.getVerse(resolvedSource, ref.book, ref.chapter, ref.verse);
       if (!result) {
-        return { content: [{ type: "text" as const, text: `Verse not found: ${reference} (source: ${source})` }] };
+        return { content: [{ type: "text" as const, text: `Verse not found: ${reference} (source: ${resolvedSource})` }] };
       }
-      let text = `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}** (${source.toUpperCase()})\n\n${result.text}`;
-      if (result.words.length > 0 && source !== "ult") {
+      let text = `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}** (${resolvedSource.toUpperCase()})\n\n${result.text}`;
+      if (result.words.length > 0 && resolvedSource !== "ult") {
         text += "\n\n**Words:**\n";
         for (const w of result.words) {
           text += `- ${w.text} — lemma: ${w.lemma}, Strong's: ${w.strong}, morph: ${w.morph}\n`;
@@ -68,9 +76,9 @@ server.tool(
 
     if (ref.verse && ref.endVerse) {
       const lines: string[] = [];
-      lines.push(`**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}-${ref.endVerse}** (${source.toUpperCase()})\n`);
+      lines.push(`**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}-${ref.endVerse}** (${resolvedSource.toUpperCase()})\n`);
       for (let v = ref.verse; v <= ref.endVerse; v++) {
-        const result = db.getVerse(source, ref.book, ref.chapter, v);
+        const result = db.getVerse(resolvedSource, ref.book, ref.chapter, v);
         if (result) {
           lines.push(`**${v}** ${result.text}`);
         }
@@ -79,11 +87,11 @@ server.tool(
     }
 
     // No verse specified — return whole chapter
-    const chapter = db.getChapter(source, ref.book, ref.chapter);
+    const chapter = db.getChapter(resolvedSource, ref.book, ref.chapter);
     if (chapter.length === 0) {
-      return { content: [{ type: "text" as const, text: `Chapter not found: ${BOOK_NAMES[ref.book]} ${ref.chapter} (source: ${source})` }] };
+      return { content: [{ type: "text" as const, text: `Chapter not found: ${BOOK_NAMES[ref.book]} ${ref.chapter} (source: ${resolvedSource})` }] };
     }
-    const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}** (${source.toUpperCase()})\n`];
+    const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}** (${resolvedSource.toUpperCase()})\n`];
     for (const v of chapter) {
       lines.push(`**${v.verse}** ${v.text}`);
     }
@@ -94,26 +102,34 @@ server.tool(
 // Tool: get_interlinear
 server.tool(
   "get_interlinear",
-  "Get word-by-word interlinear alignment between original language and English for a verse",
+  "Get word-by-word interlinear alignment between original language (Hebrew/Greek) and English. Supports single verses, verse ranges, and full chapters.",
   {
-    reference: z.string().describe("Bible reference, e.g. 'Gen 1:1', 'John 3:16'")
+    reference: z.string().describe("Bible reference — single verse ('Gen 1:1'), range ('Ps 20:1-9'), or full chapter ('Psalms 20')")
   },
   async ({ reference }) => {
     const ref = parseReference(reference);
-    if (!ref || !ref.verse) {
-      return { content: [{ type: "text" as const, text: `Please provide a specific verse reference like "Gen 1:1" or "John 3:16"` }] };
+    if (!ref) {
+      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}". Examples: "Gen 1:1", "Ps 20:1-9", "Psalms 20"` }] };
     }
 
-    const alignments = db.getInterlinear(ref.book, ref.chapter, ref.verse);
-    if (!alignments || alignments.length === 0) {
+    const rows = db.getInterlinearRange(ref.book, ref.chapter, ref.verse, ref.endVerse ?? ref.verse);
+    if (rows.length === 0) {
       return { content: [{ type: "text" as const, text: `No interlinear data found for ${reference}` }] };
     }
 
-    let text = `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse} — Interlinear**\n\n`;
-    text += "| Source | Lemma | Strong's | Morphology | English |\n";
-    text += "|--------|-------|----------|------------|----------|\n";
-    for (const a of alignments) {
-      text += `| ${a.sourceWord} | ${a.lemma} | ${a.strong} | ${a.morph} | ${a.english} |\n`;
+    const label = ref.verse
+      ? (ref.endVerse ? `${ref.chapter}:${ref.verse}-${ref.endVerse}` : `${ref.chapter}:${ref.verse}`)
+      : `${ref.chapter}`;
+
+    let text = `**${BOOK_NAMES[ref.book]} ${label} — Interlinear**\n\n`;
+    for (const row of rows) {
+      text += `**Verse ${row.verse}**\n`;
+      text += "| Source | Lemma | Strong's | Morphology | English |\n";
+      text += "|--------|-------|----------|------------|----------|\n";
+      for (const a of row.alignments) {
+        text += `| ${a.sourceWord} | ${a.lemma} | ${a.strong} | ${a.morph} | ${a.english} |\n`;
+      }
+      text += "\n";
     }
 
     return { content: [{ type: "text" as const, text }] };
@@ -193,33 +209,58 @@ server.tool(
 // Tool: get_morphology
 server.tool(
   "get_morphology",
-  "Get detailed morphological parsing for every word in a verse from the original language",
+  "Get detailed morphological parsing for every word in a verse or range from the original language (Hebrew OT / Greek NT). Supports single verses, ranges, and full chapters.",
   {
-    reference: z.string().describe("Bible reference, e.g. 'Gen 1:1', 'John 1:1'")
+    reference: z.string().describe("Bible reference — e.g. 'Gen 1:1', 'Ps 20:1-9', 'John 1'")
   },
   async ({ reference }) => {
     const ref = parseReference(reference);
-    if (!ref || !ref.verse) {
-      return { content: [{ type: "text" as const, text: `Please provide a specific verse like "Gen 1:1"` }] };
+    if (!ref) {
+      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}". Examples: "Gen 1:1", "Ps 20:1-9", "John 1"` }] };
     }
 
-    // Determine which source to use
-    const otBooks = new Set(Object.keys(BOOK_NAMES).slice(0, 39));
-    const source = otBooks.has(ref.book) ? "uhb" : "ugnt";
+    const source = OT_BOOKS.has(ref.book) ? "uhb" : "ugnt";
     const langLabel = source === "uhb" ? "Hebrew" : "Greek";
 
-    const result = db.getVerse(source, ref.book, ref.chapter, ref.verse);
-    if (!result || result.words.length === 0) {
+    if (ref.verse && !ref.endVerse) {
+      const result = db.getVerse(source, ref.book, ref.chapter, ref.verse);
+      if (!result || result.words.length === 0) {
+        return { content: [{ type: "text" as const, text: `No morphology data found for ${reference}` }] };
+      }
+      let text = `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse} — ${langLabel} Morphology**\n\n`;
+      text += "| Word | Lemma | Strong's | Morphology |\n";
+      text += "|------|-------|----------|------------|\n";
+      for (const w of result.words) {
+        text += `| ${w.text} | ${w.lemma} | ${w.strong} | ${w.morph} |\n`;
+      }
+      return { content: [{ type: "text" as const, text }] };
+    }
+
+    // Range or full chapter
+    const chapter = db.getChapter(source, ref.book, ref.chapter);
+    const filtered = ref.verse
+      ? chapter.filter(v => v.verse >= ref.verse! && v.verse <= (ref.endVerse ?? ref.verse!))
+      : chapter;
+
+    if (filtered.length === 0) {
       return { content: [{ type: "text" as const, text: `No morphology data found for ${reference}` }] };
     }
 
-    let text = `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse} — ${langLabel} Morphology**\n\n`;
-    text += "| Word | Lemma | Strong's | Morphology |\n";
-    text += "|------|-------|----------|------------|\n";
-    for (const w of result.words) {
-      text += `| ${w.text} | ${w.lemma} | ${w.strong} | ${w.morph} |\n`;
-    }
+    const label = ref.verse
+      ? `${ref.chapter}:${ref.verse}-${ref.endVerse}`
+      : `${ref.chapter}`;
 
+    let text = `**${BOOK_NAMES[ref.book]} ${label} — ${langLabel} Morphology**\n\n`;
+    for (const v of filtered) {
+      if (v.words.length === 0) continue;
+      text += `**Verse ${v.verse}**\n`;
+      text += "| Word | Lemma | Strong's | Morphology |\n";
+      text += "|------|-------|----------|------------|\n";
+      for (const w of v.words) {
+        text += `| ${w.text} | ${w.lemma} | ${w.strong} | ${w.morph} |\n`;
+      }
+      text += "\n";
+    }
     return { content: [{ type: "text" as const, text }] };
   }
 );
@@ -285,29 +326,34 @@ server.tool(
 // Tool: get_translation_verse
 server.tool(
   "get_translation_verse",
-  "Get Bible verse(s) or a full chapter from any translation via the HelloAO API. Supports hundreds of translations in many languages (BSB, WEB, NASB, ESV, etc.)",
+  "Get Bible verse(s) or a full chapter from any translation via the HelloAO API. Supports hundreds of translations including Hebrew (hbo_wlc, heb_mod), Greek, English (BSB, WEB), and many other languages.",
   {
-    reference: z.string().describe("Bible reference, e.g. 'Gen 1:1', 'John 3:16', 'Ps 23:1-6'"),
-    translation: z.string().default("BSB").describe("Translation ID (e.g. 'BSB', 'WEB'). Use list_translations to see all available.")
+    reference: z.string().describe("Bible reference, e.g. 'Gen 1:1', 'John 3:16', 'Ps 23:1-6', 'Psalms 20'"),
+    translation: z.string().default("BSB").describe("Translation ID (e.g. 'BSB', 'WEB', 'hbo_wlc' for Hebrew WLC, 'heb_mod' for Modern Hebrew). Use list_translations to see all available.")
   },
   async ({ reference, translation }) => {
     const ref = parseReference(reference);
     if (!ref) {
-      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}". Use format like "Gen 1:1" or "John 3:16-18"` }] };
+      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}". Use format like "Gen 1:1", "John 3:16-18", or "Psalms 20" (full chapter).` }] };
     }
 
     try {
+      // Always fetch the full chapter (single API call) and extract what's needed
+      const result = await helloao.getChapter(translation, ref.book, ref.chapter);
+      const translationName = result.translation.englishName || result.translation.name;
+      const translationLabel = `${translationName} (${translation})`;
+
       if (ref.verse && !ref.endVerse) {
-        const text = await helloao.getVerse(translation, ref.book, ref.chapter, ref.verse);
-        if (!text) {
-          return { content: [{ type: "text" as const, text: `Verse not found: ${reference} (${translation})` }] };
+        const v = result.verses.find(v => v.number === ref.verse);
+        if (!v || !v.text) {
+          return { content: [{ type: "text" as const, text: `Verse not found: ${reference} (${translationLabel})` }] };
         }
-        return { content: [{ type: "text" as const, text: `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}** (${translation})\n\n${text}` }] };
+        return { content: [{ type: "text" as const, text: `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}** (${translationLabel})\n\n${v.text}` }] };
       }
 
       if (ref.verse && ref.endVerse) {
-        const verses = await helloao.getVerseRange(translation, ref.book, ref.chapter, ref.verse, ref.endVerse);
-        const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}-${ref.endVerse}** (${translation})\n`];
+        const verses = result.verses.filter(v => v.number >= ref.verse! && v.number <= ref.endVerse!);
+        const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}-${ref.endVerse}** (${translationLabel})\n`];
         for (const v of verses) {
           lines.push(`**${v.number}** ${v.text}`);
         }
@@ -315,16 +361,9 @@ server.tool(
       }
 
       // Full chapter
-      const result = await helloao.getChapter(translation, ref.book, ref.chapter);
-      const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}** (${translation})\n`];
+      const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}** (${translationLabel})\n`];
       for (const v of result.verses) {
         lines.push(`**${v.number}** ${v.text}`);
-      }
-      if (result.footnotes.length > 0) {
-        lines.push("\n**Footnotes:**");
-        for (const fn of result.footnotes) {
-          lines.push(fn);
-        }
       }
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     } catch {
@@ -359,6 +398,54 @@ server.tool(
     }
 
     return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+// Tool: get_plain_text
+server.tool(
+  "get_plain_text",
+  "Get plain scripture text optimized for LLM consumption — no tables, no formatting, just the text. Works with any translation (HelloAO API) or local source (ult/ugnt/uhb). This is the simplest way to get Bible text.",
+  {
+    reference: z.string().describe("Bible reference, e.g. 'Gen 1:1', 'John 3:16-18', 'Psalms 20'"),
+    translation: z.string().default("BSB").describe("Translation ID ('BSB', 'WEB', 'hbo_wlc', etc.) or local source ('ult', 'ugnt', 'uhb')")
+  },
+  async ({ reference, translation }) => {
+    const ref = parseReference(reference);
+    if (!ref) {
+      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}".` }] };
+    }
+
+    const localSources = ["ult", "ugnt", "uhb"];
+    const isLocal = localSources.includes(translation.toLowerCase());
+
+    if (isLocal) {
+      const source = autoSource(ref.book, translation.toLowerCase());
+      if (ref.verse && !ref.endVerse) {
+        const result = db.getVerse(source, ref.book, ref.chapter, ref.verse);
+        return { content: [{ type: "text" as const, text: result?.text ?? `Not found: ${reference}` }] };
+      }
+      const chapter = db.getChapter(source, ref.book, ref.chapter);
+      const filtered = ref.verse
+        ? chapter.filter(v => v.verse >= ref.verse! && v.verse <= (ref.endVerse ?? ref.verse!))
+        : chapter;
+      const plain = filtered.map(v => `${v.verse} ${v.text}`).join("\n");
+      return { content: [{ type: "text" as const, text: plain || `Not found: ${reference}` }] };
+    }
+
+    // HelloAO API
+    try {
+      const result = await helloao.getChapter(translation, ref.book, ref.chapter);
+      let verses = result.verses;
+      if (ref.verse && ref.endVerse) {
+        verses = verses.filter(v => v.number >= ref.verse! && v.number <= ref.endVerse!);
+      } else if (ref.verse) {
+        verses = verses.filter(v => v.number === ref.verse);
+      }
+      const plain = verses.map(v => `${v.number} ${v.text}`).join("\n");
+      return { content: [{ type: "text" as const, text: plain || `Not found: ${reference} (${translation})` }] };
+    } catch {
+      return { content: [{ type: "text" as const, text: `Failed to fetch ${reference} from "${translation}".` }] };
+    }
   }
 );
 

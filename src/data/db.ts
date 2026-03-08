@@ -93,6 +93,22 @@ export class BibleDB {
     return JSON.parse(row.alignments_json);
   }
 
+  getInterlinearRange(book: string, chapter: number, startVerse?: number, endVerse?: number): { verse: number; alignments: AlignedWord[] }[] {
+    let sql = `SELECT verse, alignments_json FROM interlinear WHERE book = ? AND chapter = ?`;
+    const params: any[] = [book, chapter];
+    if (startVerse !== undefined) {
+      sql += ` AND verse >= ?`;
+      params.push(startVerse);
+    }
+    if (endVerse !== undefined) {
+      sql += ` AND verse <= ?`;
+      params.push(endVerse);
+    }
+    sql += ` ORDER BY verse`;
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map(r => ({ verse: r.verse, alignments: JSON.parse(r.alignments_json) }));
+  }
+
   searchText(source: string, query: string, limit: number = 25): { book: string; chapter: number; verse: number; text: string }[] {
     const rows = this.db.prepare(
       `SELECT book, chapter, verse, text FROM verses WHERE source = ? AND text LIKE ? LIMIT ?`

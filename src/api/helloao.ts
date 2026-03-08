@@ -26,10 +26,17 @@ export interface Book {
   totalNumberOfVerses: number;
 }
 
+interface VerseContentItem {
+  text?: string;
+  poem?: number;
+  noteId?: number;
+  lineBreak?: boolean;
+}
+
 interface VerseContent {
   type: string;
   number?: number;
-  content?: (string | { noteId: number })[];
+  content?: (string | VerseContentItem)[];
 }
 
 interface ChapterResponse {
@@ -61,23 +68,31 @@ export async function listBooks(translationId: string): Promise<Book[]> {
   return data.books;
 }
 
-export async function getChapter(translationId: string, bookId: string, chapter: number): Promise<{ verses: { number: number; text: string }[]; footnotes: string[] }> {
+function extractText(content: (string | VerseContentItem)[]): string {
+  return content
+    .map(c => {
+      if (typeof c === "string") return c;
+      if (c && typeof c === "object" && "text" in c && c.text) return c.text;
+      return "";
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export async function getChapter(translationId: string, bookId: string, chapter: number): Promise<{ translation: Translation; verses: { number: number; text: string }[]; footnotes: string[] }> {
   const data = await fetchJSON<ChapterResponse>(`${BASE_URL}/${translationId}/${bookId}/${chapter}.json`);
 
   const verses: { number: number; text: string }[] = [];
   for (const item of data.chapter.content) {
     if (item.type === "verse" && item.number !== undefined && item.content) {
-      const text = item.content
-        .filter((c): c is string => typeof c === "string")
-        .join("")
-        .trim();
-      verses.push({ number: item.number, text });
+      verses.push({ number: item.number, text: extractText(item.content) });
     }
   }
 
   const footnotes = data.chapter.footnotes?.map(f => `[${f.caller}] ${f.text}`) ?? [];
 
-  return { verses, footnotes };
+  return { translation: data.translation, verses, footnotes };
 }
 
 export async function getVerse(translationId: string, bookId: string, chapter: number, verse: number): Promise<string | null> {
