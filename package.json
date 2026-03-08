@@ -1,7 +1,7 @@
 {
-  "name": "bible-mcp",
+  "name": "bible-translation-mcp",
   "version": "0.1.0",
-  "description": "A Model Context Protocol server for accessing unfoldingWord Bible resources (UGNT, UHB, ULT, lexicons)",
+  "description": "A Model Context Protocol server enabling AI to accurately access Bible translations, original languages (Greek/Hebrew), and lexicons",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "ingest": "tsx src/data/ingest.ts",
     "prepare": "npm run ingest && npm run build"
   },
-  "keywords": ["mcp", "bible", "greek", "hebrew", "unfoldingword", "ugnt", "uhb"],
+  "keywords": ["mcp", "bible", "greek", "hebrew", "translation", "ugnt", "uhb", "bsb", "helloao"],
   "license": "CC-BY-SA-4.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { BibleDB } from "./data/db.js";
 import { parseReference, BOOK_NAMES, resolveBookCode } from "./types.js";
+import * as helloao from "./api/helloao.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -21,9 +22,9 @@ if (!existsSync(DB_PATH)) {
 const db = new BibleDB(DB_PATH);
 
 const server = new McpServer({
-  name: "bible-mcp",
+  name: "bible-translation-mcp",
   version: "0.1.0",
-  description: "Access unfoldingWord Bible resources: Greek NT (UGNT), Hebrew OT (UHB), English Literal Text (ULT), and Greek/Hebrew lexicons"
+  description: "Enables AI to accurately access Bible translations in hundreds of languages, original Greek/Hebrew texts with morphology, interlinear alignments, and lexicons"
 });
 
 // Tool: get_verse
@@ -217,6 +218,144 @@ server.tool(
     text += "|------|-------|----------|------------|\n";
     for (const w of result.words) {
       text += `| ${w.text} | ${w.lemma} | ${w.strong} | ${w.morph} |\n`;
+    }
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+// =============================================================================
+// HelloAO Bible API Tools — Access 100+ translations in many languages
+// =============================================================================
+
+// Tool: list_translations
+server.tool(
+  "list_translations",
+  "List all available Bible translations from the HelloAO API. Returns translation IDs, names, languages, and verse counts. Use a translation ID with get_translation_verse.",
+  {
+    language: z.string().optional().describe("Filter by language name (e.g. 'English', 'Spanish', 'Arabic')")
+  },
+  async ({ language }) => {
+    const translations = await helloao.listTranslations();
+    let filtered = translations;
+    if (language) {
+      const lang = language.toLowerCase();
+      filtered = translations.filter(t =>
+        t.languageEnglishName?.toLowerCase().includes(lang) ||
+        t.languageName?.toLowerCase().includes(lang) ||
+        t.language?.toLowerCase().includes(lang)
+      );
+    }
+    if (filtered.length === 0) {
+      return { content: [{ type: "text" as const, text: `No translations found${language ? ` for language "${language}"` : ""}.` }] };
+    }
+    let text = `**Available Bible Translations** (${filtered.length} results)\n\n`;
+    text += "| ID | Name | Language | Books | Verses |\n";
+    text += "|----|------|----------|-------|--------|\n";
+    for (const t of filtered) {
+      text += `| ${t.id} | ${t.englishName || t.name} | ${t.languageEnglishName || t.language} | ${t.numberOfBooks} | ${t.totalNumberOfVerses} |\n`;
+    }
+    return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+// Tool: list_translation_books
+server.tool(
+  "list_translation_books",
+  "List all books available in a specific Bible translation from the HelloAO API",
+  {
+    translation: z.string().describe("Translation ID (e.g. 'BSB', 'WEB', 'NASB')")
+  },
+  async ({ translation }) => {
+    try {
+      const books = await helloao.listBooks(translation);
+      let text = `**Books in ${translation}** (${books.length} books)\n\n`;
+      text += "| # | ID | Name | Chapters | Verses |\n";
+      text += "|---|-----|------|----------|--------|\n";
+      for (const b of books) {
+        text += `| ${b.order} | ${b.id} | ${b.name} | ${b.numberOfChapters} | ${b.totalNumberOfVerses} |\n`;
+      }
+      return { content: [{ type: "text" as const, text }] };
+    } catch {
+      return { content: [{ type: "text" as const, text: `Translation "${translation}" not found. Use list_translations to see available IDs.` }] };
+    }
+  }
+);
+
+// Tool: get_translation_verse
+server.tool(
+  "get_translation_verse",
+  "Get Bible verse(s) or a full chapter from any translation via the HelloAO API. Supports hundreds of translations in many languages (BSB, WEB, NASB, ESV, etc.)",
+  {
+    reference: z.string().describe("Bible reference, e.g. 'Gen 1:1', 'John 3:16', 'Ps 23:1-6'"),
+    translation: z.string().default("BSB").describe("Translation ID (e.g. 'BSB', 'WEB'). Use list_translations to see all available.")
+  },
+  async ({ reference, translation }) => {
+    const ref = parseReference(reference);
+    if (!ref) {
+      return { content: [{ type: "text" as const, text: `Could not parse reference: "${reference}". Use format like "Gen 1:1" or "John 3:16-18"` }] };
+    }
+
+    try {
+      if (ref.verse && !ref.endVerse) {
+        const text = await helloao.getVerse(translation, ref.book, ref.chapter, ref.verse);
+        if (!text) {
+          return { content: [{ type: "text" as const, text: `Verse not found: ${reference} (${translation})` }] };
+        }
+        return { content: [{ type: "text" as const, text: `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}** (${translation})\n\n${text}` }] };
+      }
+
+      if (ref.verse && ref.endVerse) {
+        const verses = await helloao.getVerseRange(translation, ref.book, ref.chapter, ref.verse, ref.endVerse);
+        const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse}-${ref.endVerse}** (${translation})\n`];
+        for (const v of verses) {
+          lines.push(`**${v.number}** ${v.text}`);
+        }
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      }
+
+      // Full chapter
+      const result = await helloao.getChapter(translation, ref.book, ref.chapter);
+      const lines = [`**${BOOK_NAMES[ref.book]} ${ref.chapter}** (${translation})\n`];
+      for (const v of result.verses) {
+        lines.push(`**${v.number}** ${v.text}`);
+      }
+      if (result.footnotes.length > 0) {
+        lines.push("\n**Footnotes:**");
+        for (const fn of result.footnotes) {
+          lines.push(fn);
+        }
+      }
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    } catch {
+      return { content: [{ type: "text" as const, text: `Failed to fetch ${reference} from translation "${translation}". Check the translation ID with list_translations.` }] };
+    }
+  }
+);
+
+// Tool: compare_translations
+server.tool(
+  "compare_translations",
+  "Compare a Bible verse across multiple translations side by side",
+  {
+    reference: z.string().describe("Bible reference, e.g. 'John 3:16'"),
+    translations: z.array(z.string()).default(["BSB", "WEB"]).describe("Array of translation IDs to compare")
+  },
+  async ({ reference, translations }) => {
+    const ref = parseReference(reference);
+    if (!ref || !ref.verse) {
+      return { content: [{ type: "text" as const, text: `Please provide a specific verse like "John 3:16"` }] };
+    }
+
+    let text = `**${BOOK_NAMES[ref.book]} ${ref.chapter}:${ref.verse} — Translation Comparison**\n\n`;
+
+    for (const tid of translations) {
+      try {
+        const verseText = await helloao.getVerse(tid, ref.book, ref.chapter, ref.verse);
+        text += `**${tid}:** ${verseText ?? "Not available"}\n\n`;
+      } catch {
+        text += `**${tid}:** (translation not available)\n\n`;
+      }
     }
 
     return { content: [{ type: "text" as const, text }] };

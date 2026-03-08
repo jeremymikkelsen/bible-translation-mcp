@@ -1,10 +1,11 @@
-# bible-mcp
+# bible-translation-mcp
 
-A Model Context Protocol (MCP) server for accessing unfoldingWord Bible resources — Greek New Testament (UGNT), Hebrew Old Testament (UHB), English Literal Text (ULT), and Greek/Hebrew lexicons.
+A Model Context Protocol (MCP) server that enables AI to accurately access Bible translations in hundreds of languages, original Greek and Hebrew texts with morphology, word-level interlinear alignments, and lexicons.
 
 ## Data Sources
 
-All texts are from [unfoldingWord](https://unfoldingword.org/) and licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/):
+### Local (Offline) — unfoldingWord
+Mirrored as git submodules, licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/):
 
 | Resource | Description |
 |----------|-------------|
@@ -14,23 +15,38 @@ All texts are from [unfoldingWord](https://unfoldingword.org/) and licensed unde
 | **UGL** | unfoldingWord Greek Lexicon |
 | **UHAL** | unfoldingWord Hebrew & Aramaic Lexicon |
 
+### API — HelloAO Bible API
+Access 100+ translations in many languages via [bible.helloao.org](https://bible.helloao.org):
+
+- BSB (Berean Standard Bible), WEB, NASB, ESV, and many more
+- Translations in Arabic, Hindi, Chinese, Spanish, Portuguese, and dozens of other languages
+
 ## MCP Tools
 
+### Original Language & Scholarly Tools (Local)
 | Tool | Description |
 |------|-------------|
-| `get_verse` | Fetch verse(s) by reference in ULT, UGNT, or UHB |
+| `get_verse` | Fetch verse(s) in ULT (English), UGNT (Greek), or UHB (Hebrew) |
 | `get_interlinear` | Word-by-word interlinear alignment (original language + English) |
-| `search_text` | Full-text search across any source |
+| `get_morphology` | Detailed morphological parsing for every word in a verse |
+| `search_text` | Full-text search across ULT, UGNT, or UHB |
 | `get_lexicon` | Look up a word by Strong's number |
 | `search_lexicon` | Search lexicon entries by word, gloss, or definition |
-| `get_morphology` | Detailed morphological parsing for every word in a verse |
+
+### Translation Tools (HelloAO API)
+| Tool | Description |
+|------|-------------|
+| `list_translations` | List all available translations, optionally filtered by language |
+| `list_translation_books` | List books in a specific translation |
+| `get_translation_verse` | Fetch verse(s) or chapters from any available translation |
+| `compare_translations` | Compare a verse side-by-side across multiple translations |
 
 ## Setup
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules https://github.com/jeremymikkelsen/bible-mcp.git
-cd bible-mcp
+git clone --recurse-submodules https://github.com/jeremymikkelsen/bible-translation-mcp.git
+cd bible-translation-mcp
 
 # Install dependencies
 npm install
@@ -51,7 +67,7 @@ Add to `~/.claude/claude_code_config.json`:
   "mcpServers": {
     "bible": {
       "command": "node",
-      "args": ["/path/to/bible-mcp/dist/index.js"]
+      "args": ["/path/to/bible-translation-mcp/dist/index.js"]
     }
   }
 }
