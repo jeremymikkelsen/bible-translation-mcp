@@ -1,0 +1,27 @@
+{
+  "name": "bible-mcp",
+  "version": "0.1.0",
+  "description": "A Model Context Protocol server for accessing unfoldingWord Bible resources (UGNT, UHB, ULT, lexicons)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "ingest": "tsx src/data/ingest.ts",
+    "prepare": "npm run ingest && npm run build"
+  },
+  "keywords": ["mcp", "bible", "greek", "hebrew", "unfoldingword", "ugnt", "uhb"],
+  "license": "CC-BY-SA-4.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^11.7.0",
+    "usfm-js": "^3.4.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
